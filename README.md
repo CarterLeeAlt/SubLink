@@ -36,6 +36,8 @@
 
 ## 🚀 Quick Start
 
+The Clash/Mihomo output targets a verified, fixed **Mihomo v1.19.33** contract. See [the output contract and verification scope](docs/mihomo-contract.md).
+
 ### One-Click Deployment
 - Choose a "deploy" button above to click
 - That's it! See the [Document](https://sublink.works/guide/quick-start/) for more information.

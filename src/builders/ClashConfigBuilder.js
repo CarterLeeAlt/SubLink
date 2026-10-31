@@ -7,38 +7,7 @@ import { buildSelectorMembers, buildNodeSelectMembers, buildCustomRuleMembers, u
 import { emitClashRules, sanitizeClashProxyGroups } from './helpers/clashConfigUtils.js';
 import { normalizeGroupName, findGroupIndexByName } from './helpers/groupNameUtils.js';
 import { InvalidConfigError } from '../services/errors.js';
-
-/**
- * Check if the client supports MRS (Meta Rule Set) format
- * MRS is a binary format supported by Clash Meta/mihomo
- * Legacy Clash clients need YAML format instead
- * @param {string} userAgent - Client User-Agent string
- * @returns {boolean} - True if client supports MRS format
- */
-function supportsMrsFormat(userAgent) {
-    if (!userAgent) return true; // Default to mrs for unknown clients
-    const ua = userAgent.toLowerCase();
-    
-    // Clients confirmed to support MRS format (Clash Meta/mihomo based)
-    if (ua.includes('mihomo') || 
-        ua.includes('meta') ||           // clash.meta, clashx meta, meta-for-android, etc.
-        ua.includes('clash-verge') ||
-        ua.includes('stash') ||
-        ua.includes('verge')) {
-        return true;
-    }
-    
-    // Legacy clients that don't support MRS format
-    if (ua.includes('merlin') ||
-        ua.includes('clashforwindows') ||
-        ua.includes('clashforandroid') ||
-        ua.includes('clash/')) {         // 老版本Clash核心 (Clash/v1.x.x)
-        return false;
-    }
-    
-    // Default: use mrs for unknown clients (most modern clients support it)
-    return true;
-}
+import mihomoContract from '../config/mihomo-contract.json' with { type: 'json' };
 
 function getClashUdpValue(proxy, defaultEnabled = true) {
     if (typeof proxy?.udp !== 'undefined') {
@@ -54,6 +23,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
         }
         super(inputString, baseConfig, lang, userAgent, groupByCountry, includeAutoSelect);
         this.selectedRules = selectedRules;
+        this.subscriptionTarget = 'mihomo';
         this.customRules = customRules;
         this.countryGroupNames = [];
         this.manualGroupName = null;
@@ -84,6 +54,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                 url: url,
                 path: `./proxy_providers/${name}.yaml`,
                 interval: 3600,
+                header: { 'User-Agent': [this.userAgent || `mihomo/${mihomoContract.version}`] },
                 'health-check': {
                     enable: true,
                     url: 'https://www.gstatic.com/generate_204',
@@ -129,6 +100,9 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
     }
 
     convertProxy(proxy) {
+        if (proxy.type === 'mihomo-native') return deepCopy(proxy.node);
+        const transport = proxy.transport;
+        if (proxy.type === 'trojan' && transport?.type && !['tcp', 'ws', 'grpc'].includes(transport.type)) throw new InvalidConfigError('Trojan transport must be tcp, ws or grpc for Mihomo v1.19.33');
         switch (proxy.type) {
             case 'shadowsocks':
                 return {
@@ -153,6 +127,10 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                     cipher: proxy.security,
                     tls: proxy.tls?.enabled || false,
                     servername: proxy.tls?.server_name || '',
+                    ...(proxy.alpn || proxy.tls?.alpn ? { alpn: proxy.alpn || proxy.tls.alpn } : {}),
+                    ...(proxy.tls?.utls?.fingerprint ? { 'client-fingerprint': proxy.tls.utls.fingerprint } : {}),
+                    ...(proxy.packet_encoding ? { 'packet-encoding': proxy.packet_encoding } : {}),
+                    tfo: proxy.tcp_fast_open,
                     'skip-cert-verify': !!proxy.tls?.insecure,
                     network: proxy.transport?.type || proxy.network || 'tcp',
                     'ws-opts': proxy.transport?.type === 'ws'
@@ -193,11 +171,14 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                     server: proxy.server,
                     port: proxy.server_port,
                     uuid: proxy.uuid,
-                    cipher: proxy.security,
+                    ...(proxy.encryption ? { encryption: proxy.encryption } : {}),
                     tls: proxy.tls?.enabled || false,
                     'client-fingerprint': proxy.tls?.utls?.fingerprint,
                     servername: proxy.tls?.server_name || '',
                     network: proxy.transport?.type || 'tcp',
+                    'http-opts': transport?.type === 'http' ? { method: transport.method || 'GET', path: Array.isArray(transport.path) ? transport.path : [transport.path || '/'], headers: transport.headers } : undefined,
+                    'h2-opts': transport?.type === 'h2' ? { path: transport.path, host: transport.host } : undefined,
+                    'xhttp-opts': transport?.type === 'xhttp' ? transport.options : undefined,
                     'ws-opts': proxy.transport?.type === 'ws' ? {
                         path: proxy.transport.path,
                         headers: proxy.transport.headers
@@ -212,7 +193,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                     tfo: proxy.tcp_fast_open,
                     'skip-cert-verify': !!proxy.tls?.insecure,
                     udp: getClashUdpValue(proxy),
-                    ...(proxy.alpn ? { alpn: proxy.alpn } : {}),
+                    ...(proxy.alpn || proxy.tls?.alpn ? { alpn: proxy.alpn || proxy.tls.alpn } : {}),
                     ...(proxy.packet_encoding ? { 'packet-encoding': proxy.packet_encoding } : {}),
                     'flow': proxy.flow ?? undefined,
                 };
@@ -226,15 +207,12 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                     obfs: proxy.obfs?.type,
                     'obfs-password': proxy.obfs?.password,
                     password: proxy.password,
-                    auth: proxy.auth,
                     up: proxy.up,
                     down: proxy.down,
-                    'recv-window-conn': proxy.recv_window_conn,
                     sni: proxy.tls?.server_name || '',
                     'skip-cert-verify': !!proxy.tls?.insecure,
                     ...(proxy.hop_interval !== undefined ? { 'hop-interval': proxy.hop_interval } : {}),
-                    ...(proxy.alpn ? { alpn: proxy.alpn } : {}),
-                    ...(proxy.fast_open !== undefined ? { 'fast-open': proxy.fast_open } : {}),
+                    ...(proxy.alpn || proxy.tls?.alpn ? { alpn: proxy.alpn || proxy.tls.alpn } : {}),
                 };
             case 'trojan':
                 return {
@@ -261,7 +239,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                     } : undefined,
                     tfo: proxy.tcp_fast_open,
                     'skip-cert-verify': !!proxy.tls?.insecure,
-                    ...(proxy.alpn ? { alpn: proxy.alpn } : {}),
+                    ...(proxy.alpn || proxy.tls?.alpn ? { alpn: proxy.alpn || proxy.tls.alpn } : {}),
                     'flow': proxy.flow ?? undefined,
                     udp: getClashUdpValue(proxy),
                 };
@@ -304,7 +282,7 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
                 };
             }
             default:
-                return proxy; // Return as-is if no specific conversion is defined
+                throw new InvalidConfigError(`Protocol ${proxy.type} has no verified Mihomo conversion`);
         }
     }
 
@@ -666,8 +644,14 @@ export class ClashConfigBuilder extends BaseConfigBuilder {
     }
 
     formatConfig() {
+        if (!this.getProxies().some(proxy => proxy.server && !['direct', 'reject', 'dns'].includes(proxy.type)) && this.getAllProviderNames().length === 0) {
+            throw new InvalidConfigError('No valid proxy source: refusing a direct-only subscription');
+        }
+        this.config['x-sublink-contract'] = mihomoContract.contract;
+        this.config['x-mihomo-version'] = mihomoContract.version;
         const rules = this.generateRules();
-        const useMrs = supportsMrsFormat(this.userAgent);
+        // The declared target version, not a client-name heuristic, defines the output format.
+        const useMrs = true;
         const { site_rule_providers, ip_rule_providers } = generateClashRuleSets(this.selectedRules, this.customRules, useMrs);
         this.config['rule-providers'] = {
             ...site_rule_providers,

@@ -8,6 +8,7 @@ import { Footer } from '../components/Footer.jsx';
 import { UpdateChecker } from '../components/UpdateChecker.jsx';
 import { SingboxConfigBuilder } from '../builders/SingboxConfigBuilder.js';
 import { ClashConfigBuilder } from '../builders/ClashConfigBuilder.js';
+import mihomoContract from '../config/mihomo-contract.json' with { type: 'json' };
 import { SurgeConfigBuilder } from '../builders/SurgeConfigBuilder.js';
 import { createTranslator, resolveLanguage } from '../i18n/index.js';
 import { encodeBase64, tryDecodeSubscriptionLines } from '../utils.js';
@@ -163,7 +164,7 @@ export function createApp(bindings = {}) {
             );
             await builder.build();
             const userinfo = builder.getSubscriptionUserinfo();
-            const headers = { 'Content-Type': 'text/yaml; charset=utf-8' };
+            const headers = { 'Content-Type': 'text/yaml; charset=utf-8', 'X-Mihomo-Version': mihomoContract.version, 'X-Sublink-Contract': mihomoContract.contract };
             if (userinfo) {
                 headers['subscription-userinfo'] = userinfo;
             }

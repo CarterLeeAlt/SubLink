@@ -3,6 +3,9 @@ import { deepCopy } from '../../utils.js';
 import { convertYamlProxyToObject } from '../convertYamlProxyToObject.js';
 import { convertSurgeProxyToObject } from '../convertSurgeProxyToObject.js';
 import { convertSurgeIniToJson } from '../../utils/surgeConfigParser.js';
+import { InvalidConfigError } from '../../services/errors.js';
+
+const MIHOMO_TYPES = new Set(['ss', 'ssr', 'socks5', 'http', 'vmess', 'vless', 'snell', 'trojan', 'hysteria', 'hysteria2', 'wireguard', 'tuic', 'shadowquic', 'gost-relay', 'direct', 'dns', 'reject', 'rematch', 'ssh', 'mieru', 'anytls', 'sudoku', 'masque', 'trusttunnel', 'openvpn', 'tailscale', 'zerotier', 'easytier']);
 
 /**
  * Non-proxy outbound types in Sing-Box that should be filtered out from proxies list
@@ -115,7 +118,22 @@ function parseInterval(interval) {
  * @param {string} content - The content to parse
  * @returns {object|null} - Parsed result or null if not Clash format
  */
-export function parseClashYaml(content) {
+export function parseClashYaml(content, { target } = {}) {
+    if (target === 'mihomo') {
+        let parsed;
+        try { parsed = yaml.load(content); } catch { return null; }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || (!('proxies' in parsed) && !('proxy-providers' in parsed))) return null;
+        if (parsed.proxies !== undefined && !Array.isArray(parsed.proxies)) throw new InvalidConfigError('Mihomo proxies must be an array');
+        if (parsed['proxy-providers'] !== undefined && (!parsed['proxy-providers'] || typeof parsed['proxy-providers'] !== 'object' || Array.isArray(parsed['proxy-providers']))) throw new InvalidConfigError('Mihomo proxy-providers must be a mapping');
+        const proxies = (parsed.proxies || []).map((node, index) => {
+            if (!node?.name || !MIHOMO_TYPES.has(node.type)) throw new InvalidConfigError(`Mihomo node ${index + 1}: missing name or unsupported protocol`);
+            // Same-format output must preserve fields unknown to the cross-format model.
+            return { tag: node.name, type: 'mihomo-native', node: deepCopy(node) };
+        });
+        const config = deepCopy(parsed);
+        delete config.proxies;
+        return { type: 'yamlConfig', proxies, config };
+    }
     try {
         const parsed = yaml.load(content);
         if (parsed && typeof parsed === 'object' && Array.isArray(parsed.proxies)) {
@@ -250,7 +268,7 @@ function parseSurgeProxyGroupLine(line) {
  * @param {string} content - The decoded subscription content
  * @returns {object|string[]} - Parsed config object or array of lines
  */
-export function parseSubscriptionContent(content) {
+export function parseSubscriptionContent(content, options = {}) {
     if (!content || typeof content !== 'string') {
         return [];
     }
@@ -267,7 +285,7 @@ export function parseSubscriptionContent(content) {
     }
 
     // Try Clash YAML
-    const clashResult = parseClashYaml(trimmed);
+    const clashResult = parseClashYaml(trimmed, options);
     if (clashResult) {
         return clashResult;
     }

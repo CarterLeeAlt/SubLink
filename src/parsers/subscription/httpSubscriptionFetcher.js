@@ -1,5 +1,6 @@
 import { decodeBase64 } from '../../utils.js';
 import { parseSubscriptionContent } from './subscriptionContentParser.js';
+import yaml from 'js-yaml';
 
 const SUBSCRIPTION_URI_PATTERN = /^(ss|vmess|vless|hysteria|hysteria2|hy2|trojan|tuic|anytls|http|https):\/\//i;
 
@@ -104,10 +105,11 @@ function detectFormat(content) {
         }
     }
 
-    // Try YAML (Clash format) - check for proxies: key
-    if (trimmed.includes('proxies:')) {
-        return 'clash';
-    }
+    // A provider must contain actual nodes, not merely a matching word in an error page.
+    try {
+        const parsed = yaml.load(trimmed);
+        if (Array.isArray(parsed?.proxies) && parsed.proxies.length > 0) return 'clash';
+    } catch { /* Other supported content types are checked below. */ }
 
     if (/\[(General|Proxy|Rule|Proxy Group)\]/i.test(trimmed)) {
         return 'surge';

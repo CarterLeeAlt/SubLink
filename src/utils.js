@@ -292,7 +292,9 @@ export function createTlsConfig(params) {
 		tls = {
 			enabled: true,
 			server_name: params.sni || params.host,
-			insecure: !!params?.allowInsecure || !!params?.insecure || !!params?.allow_insecure,
+			insecure: parseBool(params.allowInsecure ?? params.insecure ?? params.allow_insecure ?? params['skip-cert-verify'], false),
+			...(parseArray(params.alpn) ? { alpn: parseArray(params.alpn) } : {}),
+			...(params.fp ? { utls: { enabled: true, fingerprint: params.fp } } : {}),
 			// utls: {
 			//   enabled: true,
 			//   fingerprint: "chrome"
@@ -310,13 +312,25 @@ export function createTlsConfig(params) {
 }
 
 export function createTransportConfig(params) {
+	if (params.type === 'xhttp') {
+		const extra = params.extra ? JSON.parse(params.extra) : {};
+		const names = { noGRPCHeader: 'no-grpc-header', xPaddingBytes: 'x-padding-bytes', scMaxEachPostBytes: 'sc-max-each-post-bytes', scMinPostsIntervalMs: 'sc-min-posts-interval-ms', headers: 'headers' };
+		const options = { path: params.path || '/', host: params.host, mode: params.mode || 'auto' };
+		for (const [key, value] of Object.entries(extra)) {
+			if (!names[key]) throw new Error(`Unsupported XHTTP extra field: ${key}; use native Mihomo YAML`);
+			options[names[key]] = value;
+		}
+		return { type: 'xhttp', options };
+	}
 	return {
 		type: params.type,
 		path: params.path ?? undefined,
 		...(params.host && { 'headers': { 'host': params.host } }),
 		...(params.type === 'grpc' && {
 			service_name: params.serviceName ?? undefined,
-		})
+		}),
+		...(params.type === 'h2' && { host: parseArray(params.host) }),
+		...(params.type === 'http' && { method: params.method || 'GET', headers: params.host ? { Host: parseArray(params.host) } : undefined })
 	};
 }
 

@@ -9,10 +9,10 @@ import { generateClashRuleSets } from '../src/config/ruleGenerators.js';
  * 问题：老版本Clash内核不支持mrs格式的rule-set，导致报错：
  * "Parse config error: rules[0] [RULE-SET,category-ai-!cn,💬 AI 服务] error: rule set [category-ai-!cn] not found"
  * 
- * 解决方案：根据User-Agent检测客户端类型，对老版本Clash使用yaml格式
+ * 当前目标固定为 Mihomo v1.19.33，客户端 UA 不得改变适配基线。
  */
 
-describe('Issue #306: MRS format compatibility for legacy Clash clients', () => {
+describe('Pinned Mihomo rule format contract', () => {
   
   // 测试generateClashRuleSets函数默认行为（useMrs=true时用mrs）
   describe('generateClashRuleSets default behavior', () => {
@@ -36,7 +36,7 @@ describe('Issue #306: MRS format compatibility for legacy Clash clients', () => 
   });
 
   // 测试期望行为：老版本Clash应该使用yaml格式
-  describe('Expected behavior for legacy Clash clients', () => {
+  describe('User-Agent must not change the pinned target', () => {
     
     // 这些UA应该使用yaml格式（明确的老版本Clash客户端）
     const legacyUserAgents = [
@@ -59,7 +59,7 @@ describe('Issue #306: MRS format compatibility for legacy Clash clients', () => 
     ];
 
     legacyUserAgents.forEach(ua => {
-      it(`should use yaml format for legacy client: ${ua}`, async () => {
+      it(`should use pinned MRS format regardless of User-Agent: ${ua}`, async () => {
         const input = `
 proxies:
   - name: test-ss
@@ -87,9 +87,9 @@ proxies:
         expect(aiProvider).toBeDefined();
         
         // 期望：老版本Clash应该使用yaml格式
-        expect(aiProvider.format).toBe('yaml');
-        expect(aiProvider.url).toContain('.yaml');
-        expect(aiProvider.url).not.toContain('.mrs');
+        expect(aiProvider.format).toBe('mrs');
+        expect(aiProvider.url).toContain('.mrs');
+        expect(config['x-mihomo-version']).toBe('v1.19.33');
       });
     });
 
@@ -153,8 +153,8 @@ proxies:
 
       // 所有provider都应该使用yaml格式
       Object.entries(providers).forEach(([name, provider]) => {
-        expect(provider.format).toBe('yaml');
-        expect(provider.url).toContain('.yaml');
+        expect(provider.format).toBe('mrs');
+        expect(provider.url).toContain('.mrs');
       });
     });
   });

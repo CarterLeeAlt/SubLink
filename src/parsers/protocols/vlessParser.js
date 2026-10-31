@@ -7,7 +7,7 @@ export function parseVless(url) {
 
     const tls = createTlsConfig(params);
     if (tls.reality) {
-        tls.utls = {
+        tls.utls ??= {
             enabled: true,
             fingerprint: 'chrome'
         };
@@ -27,6 +27,8 @@ export function parseVless(url) {
         tls,
         transport,
         flow: params.flow ?? undefined,
+        ...(params.encryption && params.encryption !== 'none' ? { encryption: params.encryption } : {}),
+        packet_encoding: params.packetEncoding ?? params['packet-encoding'],
         ...(udp !== undefined ? { udp } : {})
     };
 }

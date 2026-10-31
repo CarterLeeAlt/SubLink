@@ -2,6 +2,7 @@ import { ProxyParser } from '../parsers/index.js';
 import { createStableProviderName, deepCopy, tryDecodeSubscriptionLines, decodeBase64 } from '../utils.js';
 import { createTranslator } from '../i18n/index.js';
 import { generateRules, getOutbounds, PREDEFINED_RULE_SETS } from '../config/index.js';
+import { InvalidConfigError } from '../services/errors.js';
 
 export class BaseConfigBuilder {
     constructor(inputString, baseConfig, lang, userAgent, groupByCountry = false, includeAutoSelect = true) {
@@ -35,7 +36,8 @@ export class BaseConfigBuilder {
         const { parseSubscriptionContent } = await import('../parsers/subscription/subscriptionContentParser.js');
 
         // Try to parse the entire input as a config format (Sing-Box JSON or Clash YAML)
-        const directResult = parseSubscriptionContent(input);
+        const parseOptions = { target: this.subscriptionTarget };
+        const directResult = parseSubscriptionContent(input, parseOptions);
         if (directResult && typeof directResult === 'object' && directResult.type) {
             // It's a parsed config (singboxConfig or yamlConfig)
             if (directResult.config) {
@@ -47,7 +49,7 @@ export class BaseConfigBuilder {
                         parsedItems.push(proxy);
                     }
                 }
-                if (parsedItems.length > 0) return parsedItems;
+                if (parsedItems.length > 0 || Object.keys(directResult.config?.['proxy-providers'] || {}).length) return parsedItems;
             }
         }
 
@@ -58,7 +60,7 @@ export class BaseConfigBuilder {
                 const sanitized = input.replace(/\s+/g, '');
                 const decodedWhole = decodeBase64(sanitized);
                 if (typeof decodedWhole === 'string') {
-                    const decodedResult = parseSubscriptionContent(decodedWhole);
+                    const decodedResult = parseSubscriptionContent(decodedWhole, parseOptions);
                     if (decodedResult && typeof decodedResult === 'object' && decodedResult.type) {
                         if (decodedResult.config) {
                             this.applyConfigOverrides(decodedResult.config);
@@ -69,11 +71,11 @@ export class BaseConfigBuilder {
                                     parsedItems.push(proxy);
                                 }
                             }
-                            if (parsedItems.length > 0) return parsedItems;
+                            if (parsedItems.length > 0 || Object.keys(decodedResult.config?.['proxy-providers'] || {}).length) return parsedItems;
                         }
                     }
                 }
-            } catch (_) { }
+            } catch (error) { if (this.subscriptionTarget === 'mihomo') throw error; }
         }
 
         // Otherwise, line-by-line processing (URLs, subscription content, remote lists, etc.)
@@ -93,6 +95,7 @@ export class BaseConfigBuilder {
 
                     try {
                         const fetchResult = await fetchSubscriptionWithFormat(trimmedUrl, this.userAgent);
+                        if (!fetchResult && this.subscriptionTarget === 'mihomo') throw new InvalidConfigError('An upstream subscription could not be downloaded or decoded');
                         if (fetchResult) {
                             const { content, format, url: originalUrl, subscriptionUserinfo } = fetchResult;
 
@@ -110,7 +113,7 @@ export class BaseConfigBuilder {
                             }
 
                             // Otherwise parse the content as usual
-                            const result = parseSubscriptionContent(content);
+                            const result = parseSubscriptionContent(content, parseOptions);
                             if (result && typeof result === 'object' && (result.type === 'yamlConfig' || result.type === 'singboxConfig' || result.type === 'surgeConfig')) {
                                 if (result.config) {
                                     this.applyConfigOverrides(result.config);
@@ -130,22 +133,24 @@ export class BaseConfigBuilder {
                                     if (item && typeof item === 'object' && item.tag) {
                                         parsedItems.push(item);
                                     } else if (typeof item === 'string') {
-                                        const subResult = await ProxyParser.parse(item, this.userAgent);
+                                        const subResult = await ProxyParser.parse(item, this.userAgent, parseOptions);
                                         if (subResult) {
                                             parsedItems.push(subResult);
-                                        }
+                                        } else if (this.subscriptionTarget === 'mihomo') throw new InvalidConfigError('Unsupported node in upstream subscription');
                                     }
                                 }
                             }
                         }
                     } catch (error) {
+                        if (this.subscriptionTarget === 'mihomo') throw new InvalidConfigError(`Upstream subscription processing failed: ${error instanceof InvalidConfigError ? error.message : 'invalid response'}`);
                         console.error('Error processing HTTP subscription:', error);
                     }
                     continue;
                 }
 
                 // Non-HTTP URLs (protocol URIs like ss://, vmess://, etc.)
-                const result = await ProxyParser.parse(processedUrl, this.userAgent);
+                const result = await ProxyParser.parse(processedUrl, this.userAgent, parseOptions);
+                if (!result && this.subscriptionTarget === 'mihomo') throw new InvalidConfigError('Unsupported or invalid subscription input');
                 // Handle yamlConfig, singboxConfig, and surgeConfig types (they have the same structure)
                 if (result && typeof result === 'object' && (result.type === 'yamlConfig' || result.type === 'singboxConfig' || result.type === 'surgeConfig')) {
                     if (result.config) {
@@ -165,10 +170,10 @@ export class BaseConfigBuilder {
                         if (item && typeof item === 'object' && item.tag) {
                             parsedItems.push(item);
                         } else if (typeof item === 'string') {
-                            const subResult = await ProxyParser.parse(item, this.userAgent);
+                            const subResult = await ProxyParser.parse(item, this.userAgent, parseOptions);
                             if (subResult) {
                                 parsedItems.push(subResult);
-                            }
+                            } else if (this.subscriptionTarget === 'mihomo') throw new InvalidConfigError('Unsupported node in subscription input');
                         }
                     }
                 } else if (result) {
@@ -198,15 +203,16 @@ export class BaseConfigBuilder {
     async collectProviderNodeNames(content) {
         try {
             const { parseSubscriptionContent } = await import('../parsers/subscription/subscriptionContentParser.js');
-            const result = parseSubscriptionContent(content);
+            const result = parseSubscriptionContent(content, { target: this.subscriptionTarget });
             const proxies = Array.isArray(result?.proxies) ? result.proxies : [];
+            if (this.subscriptionTarget === 'mihomo' && proxies.length === 0) throw new InvalidConfigError('Upstream proxy provider has no valid nodes');
             proxies.forEach(proxy => {
                 const name = proxy?.tag ?? proxy?.name;
                 if (typeof name === 'string' && name.trim()) {
                     this.providerNodeNames.push(name.trim());
                 }
             });
-        } catch (_) { }
+        } catch (error) { if (this.subscriptionTarget === 'mihomo') throw error; }
     }
 
     getAutoProviderDescriptors(reservedNames = []) {
